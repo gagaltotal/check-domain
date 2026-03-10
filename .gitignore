@@ -29,3 +29,10 @@ monitor_result.csv
 monitor_result.txt
 
 check-prod.py
+
+bin/
+lib/
+include/
+share/
+lib64/
+pyvenv.cfg

@@ -6,7 +6,7 @@ import socket
 import ssl
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 # ================= CONFIG =================
 
@@ -230,7 +230,7 @@ async def check_host(session,host,semaphore,resolver):
 
 def save_results(up_list,down_list):
 
-    timestamp=datetime.utcnow().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     result={
         "timestamp":timestamp,
@@ -321,7 +321,7 @@ async def monitor(hosts):
 
 async def main():
 
-    BEGIN_TIME=datetime.utcnow().isoformat()
+    BEGIN_TIME = datetime.now(timezone.utc).isoformat()
 
     BANNER = r"""
     ╔══════════════════════════════════════════════════════════════════════╗

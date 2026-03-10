@@ -27,6 +27,14 @@ Bisa cek lebih lengkap install subfinder di docs:
 https://docs.projectdiscovery.io/opensource/subfinder/install
 ```
 
+# install package pakai virtual atau venv
+
+```sh
+python -m venv check-domain
+source check-domain/bin/activate
+pip install aiohttp aiodns
+```
+
 # Contoh Pakai :
 
 ```sh
