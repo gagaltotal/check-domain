@@ -29,6 +29,7 @@ monitor_result.csv
 monitor_result.txt
 
 check-prod.py
+backup.py
 
 bin/
 lib/

@@ -6,10 +6,14 @@ Fitur:
 - report list domain dengan format json dan txt
 
 Prasyarat:
-- Python 3.8+
+- Python 3.8+ or 3.12x etc
 - install subfinder
-- aiohttp: pip install aiohttp
-- aiodns: pip install aiodns  
+- aiohttp
+- aiodns
+- fastapi
+- uvicorn
+- websockets
+- uvloop
 
 # install subfinder
 
@@ -32,13 +36,31 @@ https://docs.projectdiscovery.io/opensource/subfinder/install
 ```sh
 python -m venv check-domain
 source check-domain/bin/activate
-pip install aiohttp aiodns
+pip install aiohttp aiodns fastapi uvicorn websockets uvloop
 ```
 
 # Contoh Pakai :
 
 ```sh
 $ python check.py
+```
+
+# Monitor Api Browser port 8000
+
+```sh
+$ localhost:8000
+```
+
+# Monitor Grafana Json
+
+```sh
+$ localhost:8000/grafana
+```
+
+# WebSocket realtime
+
+```sh
+$ ws://localhost:8000/ws
 ```
 
 Lisensi: Open Source

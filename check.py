@@ -1,12 +1,12 @@
 import asyncio
 import aiohttp
-import aiodns
 import subprocess
-import socket
-import ssl
 import json
 import time
 from datetime import datetime, timezone
+from fastapi import FastAPI, WebSocket
+from contextlib import asynccontextmanager
+import uvicorn
 
 # ================= CONFIG =================
 
@@ -15,309 +15,298 @@ DOMAINS = [
 ]
 
 CHECK_INTERVAL = 60
-TIMEOUT = 8
-CONCURRENT_REQUESTS = 100
-RETRY = 2
+REENUM_INTERVAL = 3600
 
-RESPONSE_THRESHOLD = 10  # seconds time 
-
-COMMON_SUBS = [
-    "www","mail","webmail","ftp","cpanel",
-    "api","dev","test","staging","admin",
-    "panel","blog","shop","ns1","ns2"
-]
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept": "*/*"
-}
+BATCH_SIZE = 2000
+CONCURRENCY = 800
+TIMEOUT = 5
 
 # ==========================================
 
+hosts = []
+clients = set()
+history = {}
 
-# ============ ENUMERATION ============
+# ================= ENUMERATION =================
 
 def enum_subfinder(domain):
-    subs = set()
+
+    subs=set()
+
     try:
-        result = subprocess.run(
+        r=subprocess.run(
             ["subfinder","-silent","-d",domain],
             capture_output=True,
-            text=True,
-            timeout=120
+            text=True
         )
 
-        for line in result.stdout.splitlines():
-            subs.add(line.strip().lower())
+        for s in r.stdout.splitlines():
+            subs.add(s.strip())
 
-    except Exception as e:
-        print("Subfinder error:", e)
+    except:
+        pass
 
     return subs
 
 
-def brute_common(domain):
-    found=set()
-
-    for sub in COMMON_SUBS:
-        host=f"{sub}.{domain}"
-        try:
-            socket.gethostbyname(host)
-            found.add(host)
-        except:
-            pass
-
-    return found
-
-
 def enumerate_all():
+
+    global hosts
 
     all_hosts=set()
 
-    for domain in DOMAINS:
+    for d in DOMAINS:
 
-        print(f"[+] ENUM {domain}")
+        all_hosts.add(d)
 
-        all_hosts.add(domain)
+        subs=enum_subfinder(d)
 
-        sf=enum_subfinder(domain)
-        brute=brute_common(domain)
+        all_hosts |= subs
 
-        print("  Subfinder:",len(sf))
-        print("  Bruteforce:",len(brute))
+    hosts=list(all_hosts)
 
-        all_hosts |= sf | brute
-
-    print("TOTAL HOST:",len(all_hosts))
-
-    return list(all_hosts)
+    print("DISCOVERED HOSTS:",len(hosts))
 
 
-# ============ NETWORK CHECKS ============
-
-async def resolve_dns(host,resolver):
-
-    try:
-        await resolver.query_dns(host, "A")
-        return True
-    except:
-        return False
-
-
-async def tcp_check(host,port):
-
-    try:
-        reader,writer=await asyncio.wait_for(
-            asyncio.open_connection(host,port),
-            timeout=3
-        )
-        writer.close()
-        await writer.wait_closed()
-        return True
-
-    except:
-        return False
-
-
-async def ssl_check(host):
-
-    try:
-        ctx=ssl.create_default_context()
-
-        reader,writer=await asyncio.open_connection(
-            host,
-            443,
-            ssl=ctx,
-            server_hostname=host
-        )
-
-        writer.close()
-        await writer.wait_closed()
-
-        return True
-
-    except:
-        return False
-
+# ================= HTTP CHECK =================
 
 async def http_check(session,host):
 
     urls=[f"http://{host}",f"https://{host}"]
 
-    for _ in range(RETRY):
+    headers={"User-Agent":"MonitorBot/6.1"}
 
-        for url in urls:
+    for url in urls:
 
-            start=time.time()
+        start=time.time()
 
-            try:
+        try:
 
-                async with session.get(
-                    url,
-                    timeout=TIMEOUT,
-                    allow_redirects=True
-                ) as resp:
+            async with session.get(
+                url,
+                headers=headers,
+                allow_redirects=True
+            ) as r:
 
-                    elapsed=time.time()-start
+                latency=time.time()-start
 
-                    if elapsed>RESPONSE_THRESHOLD:
-                        return False
+                if r.status<500 or r.status==403:
 
-                    if resp.status<500 or resp.status==403:
-                        return True
+                    return host,True,latency
 
-            except:
-                pass
+        except:
+            pass
 
-    return False
+    return host,False,None
 
 
-async def ping_check(host):
+# ================= HISTORY =================
 
-    try:
+def update_history(host,up):
 
-        proc=await asyncio.create_subprocess_exec(
-            "ping","-c","1","-W","2",host,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
-        )
+    h=history.setdefault(host,{"up":0,"total":0})
 
-        await proc.communicate()
+    h["total"]+=1
 
-        return proc.returncode==0
-
-    except:
-        return False
+    if up:
+        h["up"]+=1
 
 
-# ============ HOST CHECK ============
+def uptime(host):
 
-async def check_host(session,host,semaphore,resolver):
+    h=history.get(host)
 
-    async with semaphore:
+    if not h:
+        return 0
 
-        # DNS
-        dns_ok=await resolve_dns(host,resolver)
-        if not dns_ok:
-            return host,False
+    return round((h["up"]/h["total"])*100,2)
 
-        # TCP
-        tcp80=await tcp_check(host,80)
-        tcp443=await tcp_check(host,443)
 
-        if not tcp80 and not tcp443:
-            return host,False
+# ================= SAVE RESULT =================
 
-        # SSL
-        if tcp443:
-            ssl_ok=await ssl_check(host)
+def save_results(results):
+
+    up=[]
+    down=[]
+    grafana=[]
+
+    for host,ok,lat in results:
+
+        update_history(host,ok)
+
+        if ok:
+            up.append(host)
         else:
-            ssl_ok=False
+            down.append(host)
 
-        # HTTP
-        http_ok=await http_check(session,host)
+        grafana.append({
+            "host":host,
+            "up":1 if ok else 0,
+            "latency":lat,
+            "uptime_percent":uptime(host),
+            "timestamp":int(time.time())
+        })
 
-        if http_ok:
-            return host,True
-
-        # fallback ping
-        ping_ok=await ping_check(host)
-
-        return host,ping_ok
-
-
-# ============ SAVE RESULT ============
-
-def save_results(up_list,down_list):
-
-    timestamp = datetime.now(timezone.utc).isoformat()
-
-    result={
-        "timestamp":timestamp,
-        "total_domains":len(up_list)+len(down_list),
-        "total_up":len(up_list),
-        "total_down":len(down_list),
-        "up_domains":sorted(up_list),
-        "down_domains":sorted(down_list)
+    data={
+        "timestamp":datetime.now(timezone.utc).isoformat(),
+        "total_domains":len(results),
+        "total_up":len(up),
+        "total_down":len(down),
+        "up_domains":up,
+        "down_domains":down
     }
 
     with open("monitor_result.json","w") as f:
-        json.dump(result,f,indent=4)
+        json.dump(data,f,indent=2)
 
-    with open("monitor_result.txt","w") as f:
+    with open("grafana_metrics.json","w") as f:
+        json.dump(grafana,f)
 
-        f.write(f"Timestamp: {timestamp}\n")
-        f.write(f"Total Domains: {result['total_domains']}\n")
-        f.write(f"Total UP: {result['total_up']}\n")
-        f.write(f"Total DOWN: {result['total_down']}\n\n")
-
-        f.write("=== UP DOMAINS ===\n")
-
-        for d in result["up_domains"]:
-            f.write(d+"\n")
-
-        f.write("\n=== DOWN DOMAINS ===\n")
-
-        for d in result["down_domains"]:
-            f.write(d+"\n")
+    return data
 
 
-# ============ MONITOR ============
+# ================= WEBSOCKET =================
 
-async def monitor(hosts):
+async def broadcast(item):
 
-    status_map={}
+    if not clients:
+        return
 
-    semaphore=asyncio.Semaphore(CONCURRENT_REQUESTS)
+    msg=json.dumps(item)
 
-    resolver=aiodns.DNSResolver()
+    dead=set()
+
+    for ws in clients:
+
+        try:
+            await ws.send_text(msg)
+        except:
+            dead.add(ws)
+
+    clients.difference_update(dead)
+
+
+# ================= SCANNER =================
+
+async def scan_batch(session,batch):
+
+    sem=asyncio.Semaphore(CONCURRENCY)
+
+    results=[]
+
+    async def worker(host):
+
+        async with sem:
+
+            r=await http_check(session,host)
+
+            results.append(r)
+
+            await broadcast({
+                "host":r[0],
+                "up":r[1],
+                "latency":r[2]
+            })
+
+    await asyncio.gather(*(worker(h) for h in batch))
+
+    return results
+
+
+# ================= MONITOR LOOP =================
+
+async def monitor():
+
+    timeout=aiohttp.ClientTimeout(total=TIMEOUT)
+
+    connector=aiohttp.TCPConnector(limit=CONCURRENCY,ttl_dns_cache=300)
+
+    async with aiohttp.ClientSession(
+        connector=connector,
+        timeout=timeout
+    ) as session:
+
+        while True:
+
+            results=[]
+
+            for i in range(0,len(hosts),BATCH_SIZE):
+
+                batch=hosts[i:i+BATCH_SIZE]
+
+                r=await scan_batch(session,batch)
+
+                results.extend(r)
+
+            save_results(results)
+
+            print("SCAN COMPLETE:",len(results))
+
+            await asyncio.sleep(CHECK_INTERVAL)
+
+
+# ================= AUTO DISCOVERY =================
+
+async def auto_discovery():
 
     while True:
 
-        print("\n===== CHECK ROUND =====")
+        enumerate_all()
 
-        up_list=[]
-        down_list=[]
-
-        async with aiohttp.ClientSession(headers=HEADERS) as session:
-
-            tasks=[
-                check_host(session,host,semaphore,resolver)
-                for host in hosts
-            ]
-
-            results=await asyncio.gather(*tasks)
-
-        for host,is_up in results:
-
-            if is_up:
-                up_list.append(host)
-            else:
-                down_list.append(host)
-
-            old=status_map.get(host)
-
-            if old is None:
-                print(f"[INIT] {host} => {'UP' if is_up else 'DOWN'}")
-
-            elif old and not is_up:
-                print(f"[ALERT] DOWN: {host}")
-
-            elif not old and is_up:
-                print(f"[RECOVER] UP: {host}")
-
-            status_map[host]=is_up
-
-        save_results(up_list,down_list)
-
-        print(f"UP: {len(up_list)} | DOWN: {len(down_list)}")
-
-        print(f"Sleep {CHECK_INTERVAL}s...\n")
-
-        await asyncio.sleep(CHECK_INTERVAL)
+        await asyncio.sleep(REENUM_INTERVAL)
 
 
-# ============ MAIN ============
+# ================= FASTAPI =================
+
+@asynccontextmanager
+async def lifespan(app:FastAPI):
+
+    enumerate_all()
+
+    asyncio.create_task(monitor())
+    asyncio.create_task(auto_discovery())
+
+    yield
+
+
+app=FastAPI(lifespan=lifespan)
+
+
+@app.get("/")
+def dashboard():
+
+    try:
+        with open("monitor_result.json") as f:
+            return json.load(f)
+    except:
+        return {"status":"no data yet"}
+
+
+@app.get("/grafana")
+def grafana():
+
+    try:
+        with open("grafana_metrics.json") as f:
+            return json.load(f)
+    except:
+        return []
+
+
+@app.websocket("/ws")
+async def ws(ws:WebSocket):
+
+    await ws.accept()
+
+    clients.add(ws)
+
+    try:
+        while True:
+            await ws.receive_text()
+    except:
+        clients.remove(ws)
+
+
+# ================= START =================
 
 async def main():
 
@@ -334,11 +323,14 @@ async def main():
 
     print(BANNER)
 
-    hosts=enumerate_all()
-
-    await monitor(hosts)
-
 
 if __name__=="__main__":
 
     asyncio.run(main())
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        loop="uvloop"
+    )
