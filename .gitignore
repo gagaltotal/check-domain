@@ -37,3 +37,5 @@ include/
 share/
 lib64/
 pyvenv.cfg
+
+.env
