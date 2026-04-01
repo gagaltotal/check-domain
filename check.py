@@ -59,8 +59,20 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 USE_UVLOOP = os.getenv("USE_UVLOOP", "1").lower() in {"1", "true", "yes"}
 DATA_DIR = Path(os.getenv("DATA_DIR", "."))
-RESULT_FILE = DATA_DIR / "monitor_result.json"
-GRAFANA_FILE = DATA_DIR / "grafana_metrics.json"
+REPORT_DIR = DATA_DIR / "report"
+
+def dated_file(prefix, now=None):
+    if now is None:
+        now = datetime.now(timezone.utc)
+    return REPORT_DIR / f"{prefix}_{now:%Y_%m_%d}.json"
+
+
+def current_result_file():
+    return dated_file("monitor_result")
+
+
+def current_grafana_file():
+    return dated_file("grafana_metrics")
 
 # ==========================================
 
@@ -170,7 +182,7 @@ def uptime(host):
 def save_results(results):
     global latest_snapshot
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
     up = []
     down = []
@@ -208,10 +220,13 @@ def save_results(results):
         "hosts": snapshot,
     }
 
-    with open(RESULT_FILE, "w") as f:
+    result_file = current_result_file()
+    grafana_file = current_grafana_file()
+
+    with open(result_file, "w") as f:
         json.dump(latest_snapshot, f, indent=2)
 
-    with open(GRAFANA_FILE, "w") as f:
+    with open(grafana_file, "w") as f:
         json.dump(grafana, f)
 
     return latest_snapshot
@@ -313,8 +328,9 @@ app = FastAPI(lifespan=lifespan)
 def dashboard():
     if latest_snapshot:
         return latest_snapshot
-    if RESULT_FILE.exists():
-        with open(RESULT_FILE) as f:
+    result_file = current_result_file()
+    if result_file.exists():
+        with open(result_file) as f:
             return json.load(f)
     return {"status": "no data yet"}
 
@@ -348,8 +364,9 @@ def status_host(host: str):
 
 @app.get("/grafana")
 def grafana():
-    if GRAFANA_FILE.exists():
-        with open(GRAFANA_FILE) as f:
+    grafana_file = current_grafana_file()
+    if grafana_file.exists():
+        with open(grafana_file) as f:
             return json.load(f)
     return []
 
