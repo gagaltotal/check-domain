@@ -74,6 +74,9 @@ Jika tidak ada `DOMAINS` di `.env` atau environment, default `example.com` akan 
 - `/grafana` : output JSON untuk Grafana
 - `/metrics` : metrik Prometheus
 - `/ws` : websocket realtime
+- `/reports` : daftar tanggal laporan JSON
+- `/reports/{date}` : muat laporan `monitor_result_YYYY_MM_DD.json`
+- `/dashboard` : antarmuka UI Vue.js realtime
 
 ## Output File
 - `monitor_result.json` : ringkasan hasil monitoring

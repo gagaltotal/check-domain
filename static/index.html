@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Domain Monitor Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div>
+        <h1>Domain Monitor Dashboard</h1>
+        <p>Realtime monitoring dan laporan per tanggal</p>
+      </div>
+      <div class="badge">Grafik</div>
+    </header>
+
+    <section class="controls">
+      <div>
+        <label for="date-select">Tanggal laporan</label>
+        <select id="date-select" v-model="selectedDate" @change="loadSelectedDate">
+          <option value="current">Realtime</option>
+          <option v-for="date in dates" :key="date" :value="date">{{ formatDate(date) }}</option>
+        </select>
+        <button @click="refresh">Refresh</button>
+      </div>
+      <div class="status-pill" :class="statusClass">{{ statusLabel }}</div>
+    </section>
+
+    <section class="summary-grid">
+      <article class="card">
+        <h2>Total Domain</h2>
+        <p>{{ snapshot.total_domains || 0 }}</p>
+      </article>
+      <article class="card card-success">
+        <h2>Up</h2>
+        <p>{{ snapshot.total_up || 0 }}</p>
+      </article>
+      <article class="card card-danger">
+        <h2>Down</h2>
+        <p>{{ snapshot.total_down || 0 }}</p>
+      </article>
+      <article class="card card-info">
+        <h2>Last Scan</h2>
+        <p>{{ formattedTimestamp }}</p>
+      </article>
+    </section>
+
+    <section class="charts">
+      <div class="chart-card">
+        <h3>Status Up / Down</h3>
+        <canvas id="statusChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Top 10 Latency</h3>
+        <canvas id="latencyChart"></canvas>
+      </div>
+    </section>
+
+    <section class="table-panel">
+      <div class="table-header">
+        <h2>Host Status</h2>
+        <p>Menampilkan host terbaru untuk tanggal yang dipilih.</p>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Host</th>
+            <th>Status</th>
+            <th>Latency (s)</th>
+            <th>Uptime (%)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="host in sortedHosts" :key="host.host">
+            <td>{{ host.host }}</td>
+            <td :class="host.status">{{ host.status }}</td>
+            <td>{{ host.latency !== null ? host.latency.toFixed(3) : '-' }}</td>
+            <td>{{ host.uptime_percent.toFixed(2) }}</td>
+          </tr>
+          <tr v-if="sortedHosts.length === 0">
+            <td colspan="4" class="empty-row">Tidak ada data host untuk tanggal ini.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer>
+      <p>Data dari endpoint API dan report JSON di `report/`.</p>
+    </footer>
+  </div>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

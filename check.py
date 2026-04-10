@@ -10,7 +10,9 @@ from pathlib import Path
 
 import aiohttp
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 # ================= CONFIG =================
 
@@ -322,6 +324,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+
+
+def report_dates():
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    dates = set()
+    for path in REPORT_DIR.iterdir():
+        if path.is_file() and path.name.startswith("monitor_result_") and path.suffix == ".json":
+            match = re.match(r"monitor_result_(\d{4}_\d{2}_\d{2})\.json$", path.name)
+            if match:
+                dates.add(match.group(1))
+    return sorted(dates)
 
 
 @app.get("/")
@@ -369,6 +383,42 @@ def grafana():
         with open(grafana_file) as f:
             return json.load(f)
     return []
+
+
+@app.get("/reports")
+def reports():
+    return {
+        "dates": report_dates(),
+        "current": bool(latest_snapshot or current_result_file().exists()),
+    }
+
+
+@app.get("/reports/{date}")
+def report(date: str):
+    if date == "current":
+        if latest_snapshot:
+            return latest_snapshot
+        result_file = current_result_file()
+        if result_file.exists():
+            with open(result_file) as f:
+                return json.load(f)
+        raise HTTPException(status_code=404, detail="Tidak ada data realtime saat ini")
+
+    if not re.fullmatch(r"\d{4}_\d{2}_\d{2}", date):
+        raise HTTPException(status_code=400, detail="Format tanggal tidak valid")
+
+    report_file = REPORT_DIR / f"monitor_result_{date}.json"
+    if not report_file.exists():
+        raise HTTPException(status_code=404, detail="Laporan untuk tanggal ini tidak ditemukan")
+
+    with open(report_file) as f:
+        return json.load(f)
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard_page():
+    path = Path(__file__).parent / "static" / "index.html"
+    return path.read_text()
 
 
 @app.get("/metrics")
