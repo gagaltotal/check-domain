@@ -28,10 +28,20 @@ Tool ini melakukan:
 
 ## Instalasi
 
+## Installasi manual
+
 ```sh
 python -m venv .venv
 source .venv/bin/activate
 pip install aiohttp fastapi uvicorn websockets
+pip install -r requirements.txt
+```
+
+## Installasi script bash
+
+```sh
+chmod +x install.sh
+./install.sh
 ```
 
 ## Menjalankan
