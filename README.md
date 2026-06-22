@@ -84,9 +84,11 @@ nano .env
 
 ```sh
 chmod +x installer.sh
-./installer.sh service
 ./installer.sh help
+./installer.sh service
 ```
+
+# Perintah Management
 
 ## Cek status
 
