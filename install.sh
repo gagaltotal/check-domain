@@ -18,6 +18,33 @@ log_error()   { echo -e "${RED}[-]${NC}    $*"; }
 log_step()    { echo -e "${CYAN}[>>]${NC}   $*"; }
 
 #===============================================================================
+# APP CONFIGURATION
+#===============================================================================
+APP_NAME="check-domain"
+APP_DESCRIPTION="Domain Checker Service"
+APP_MAIN_SCRIPT="check.py"
+INSTALL_DIR="/opt/${APP_NAME}"
+APP_USER="${APP_NAME}"
+APP_GROUP="${APP_NAME}"
+SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
+
+## =============================================================================
+## Banner
+## =============================================================================
+banner() {
+echo -e "${GREEN}
+ ██████╗██████╗     ██╗███╗   ██╗███████╗████████╗ █████╗ ██╗     ██╗     ███████╗██████╗ 
+██╔════╝██╔══██╗    ██║████╗  ██║██╔════╝╚══██╔══╝██╔══██╗██║     ██║     ██╔════╝██╔══██╗
+██║     ██║  ██║    ██║██╔██╗ ██║███████╗   ██║   ███████║██║     ██║     █████╗  ██████╔╝
+██║     ██║  ██║    ██║██║╚██╗██║╚════██║   ██║   ██╔══██║██║     ██║     ██╔══╝  ██╔══██╗
+╚██████╗██████╔╝    ██║██║ ╚████║███████║   ██║   ██║  ██║███████╗███████╗███████╗██║  ██║
+ ╚═════╝╚═════╝     ╚═╝╚═╝  ╚═══╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝
+Installation Script for ${APP_NAME} - ${APP_DESCRIPTION} - Version 1.0
+Author: GhostGTR666 - Gagaltotal666
+"
+}
+
+#===============================================================================
 # PACKAGE MANAGER DETECTION
 #===============================================================================
 detect_pkg_manager() {
@@ -321,9 +348,302 @@ setup_python_env() {
 }
 
 #===============================================================================
+# CREATE SYSTEM USER
+#===============================================================================
+create_app_user() {
+    log_step "Creating application user..."
+    
+    if id "$APP_USER" &>/dev/null; then
+        log_info "User '$APP_USER' already exists"
+        return 0
+    fi
+    
+    if sudo useradd --system --no-create-home --shell /usr/sbin/nologin --group "$APP_GROUP" "$APP_USER" 2>/dev/null; then
+        log_success "User '$APP_USER' created"
+    elif sudo adduser --system --no-create-home --shell /usr/sbin/nologin --group "$APP_GROUP" "$APP_USER" 2>/dev/null; then
+        log_success "User '$APP_USER' created"
+    else
+        log_warn "Could not create user, using current user"
+        APP_USER="$(whoami)"
+        APP_GROUP="$(id -gn)"
+    fi
+}
+
+#===============================================================================
+# INSTALL APPLICATION FILES
+#===============================================================================
+install_app_files() {
+    log_step "Installing application files to $INSTALL_DIR..."
+    
+    sudo mkdir -p "$INSTALL_DIR"
+    
+    local SOURCE_DIR
+    SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    
+    if command -v rsync &>/dev/null; then
+        sudo rsync -a \
+            --exclude='.venv' \
+            --exclude='.git' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.env' \
+            "$SOURCE_DIR/" "$INSTALL_DIR/"
+    else
+        sudo cp -r "$SOURCE_DIR"/* "$INSTALL_DIR/" 2>/dev/null || true
+        sudo rm -rf "$INSTALL_DIR/.venv" "$INSTALL_DIR/.git" 2>/dev/null || true
+        find "$INSTALL_DIR" -type d -name '__pycache__' -exec sudo rm -rf {} + 2>/dev/null || true
+        find "$INSTALL_DIR" -type f -name '*.pyc' -delete 2>/dev/null || true
+    fi
+    
+    log_success "Files installed to $INSTALL_DIR"
+}
+
+#===============================================================================
+# SETUP VENV IN INSTALL DIR
+#===============================================================================
+setup_install_venv() {
+    log_step "Setting up Python environment in $INSTALL_DIR..."
+    
+    cd "$INSTALL_DIR"
+    
+    if [[ ! -d ".venv" ]]; then
+        log_info "Creating virtual environment..."
+        if ! sudo python3 -m venv .venv; then
+            log_error "Failed to create venv"
+            return 1
+        fi
+        log_success "Virtual environment created"
+    fi
+    
+    sudo .venv/bin/pip install --upgrade pip --quiet 2>&1 || true
+    
+    if [[ -f "requirements.txt" ]]; then
+        log_info "Installing dependencies from requirements.txt..."
+        if sudo .venv/bin/pip install -r requirements.txt 2>&1; then
+            log_success "Dependencies installed"
+        else
+            log_error "Failed to install dependencies"
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
+#===============================================================================
+# FIND SUBFINDER PATH
+#===============================================================================
+find_subfinder_path() {
+    local -a paths=(
+        "$HOME/go/bin/subfinder"
+        "/usr/local/go/bin/subfinder"
+        "/usr/local/bin/subfinder"
+        "/usr/bin/subfinder"
+    )
+    
+    for p in "${paths[@]}"; do
+        [[ -x "$p" ]] && echo "$p" && return 0
+    done
+    
+    command -v subfinder 2>/dev/null && return 0
+    
+    echo ""
+    return 1
+}
+
+#===============================================================================
+# CREATE SYSTEMD SERVICE FILE
+#===============================================================================
+create_service_file() {
+    log_step "Creating systemd service..."
+    
+    if [[ ! -f "$INSTALL_DIR/$APP_MAIN_SCRIPT" ]]; then
+        log_error "Main script not found: $INSTALL_DIR/$APP_MAIN_SCRIPT"
+        return 1
+    fi
+    
+    local SUBFINDER_PATH
+    SUBFINDER_PATH=$(find_subfinder_path)
+    
+    local ENV_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    if [[ -n "$SUBFINDER_PATH" ]]; then
+        ENV_PATH="$(dirname "$SUBFINDER_PATH"):${ENV_PATH}"
+        log_info "subfinder found: $SUBFINDER_PATH"
+    else
+        log_warn "subfinder not found"
+    fi
+    
+    sudo tee "$SERVICE_FILE" > /dev/null << EOF
+[Unit]
+Description=${APP_DESCRIPTION}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${APP_USER}
+Group=${APP_GROUP}
+WorkingDirectory=${INSTALL_DIR}
+Environment="PATH=${ENV_PATH}"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=${INSTALL_DIR}/.venv/bin/python ${INSTALL_DIR}/${APP_MAIN_SCRIPT}
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=60
+StartLimitBurst=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=${APP_NAME}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    [[ -f "$SERVICE_FILE" ]] && log_success "Service file created: $SERVICE_FILE" && return 0
+    
+    log_error "Failed to create service file"
+    return 1
+}
+
+#===============================================================================
+# SET PERMISSIONS
+#===============================================================================
+set_permissions() {
+    log_step "Setting permissions..."
+    sudo chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR"
+    sudo find "$INSTALL_DIR" -type d -exec chmod 755 {} \;
+    sudo find "$INSTALL_DIR" -type f -exec chmod 644 {} \;
+    sudo find "$INSTALL_DIR" -name "*.py" -exec chmod 755 {} \;
+    
+    # Handle .env file if exists
+    if [[ -f "$INSTALL_DIR/.env" ]]; then
+        sudo chmod 600 "$INSTALL_DIR/.env"
+        sudo chown "$APP_USER:$APP_GROUP" "$INSTALL_DIR/.env"
+    fi
+    
+    log_success "Permissions set"
+}
+
+#===============================================================================
+# ENABLE AND START SERVICE
+#===============================================================================
+enable_service() {
+    log_step "Enabling service..."
+    
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$APP_NAME.service" 2>&1 && log_success "Service enabled"
+    
+    echo ""
+    read -p "$(echo -e "${CYAN}[?]${NC}   Start service now? [y/N]: ")" -r response
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        sudo systemctl start "$APP_NAME.service" && {
+            log_success "Service started!"
+            echo ""
+            log_info "Status:  sudo systemctl status $APP_NAME"
+            log_info "Logs:    sudo journalctl -u $APP_NAME -f"
+        } || {
+            log_error "Failed to start. Check logs:"
+            log_info "sudo journalctl -u $APP_NAME -n 50"
+        }
+    fi
+}
+
+#===============================================================================
+# INSTALL AS SERVICE (MAIN FUNCTION)
+#===============================================================================
+install_as_service() {
+    banner
+    echo ""
+    echo "========================================"
+    echo "  Install ${APP_NAME} as Systemd Service"
+    echo "========================================"
+    echo ""
+    
+    local pkg_manager
+    pkg_manager=$(detect_pkg_manager)
+    
+    [[ "$pkg_manager" == "unknown" ]] && { log_error "Unsupported package manager"; return 1; }
+    
+    log_success "Package manager: $pkg_manager"
+    
+    local pkg_list
+    pkg_list=$(get_package_names "$pkg_manager")
+    
+    local -a missing=()
+    for pkg in $pkg_list; do
+        is_package_installed "$pkg" "$pkg_manager" || missing+=("$pkg")
+    done
+    
+    [[ ${#missing[@]} -gt 0 ]] && {
+        log_step "Installing ${#missing[@]} package(s)..."
+        install_packages "$pkg_manager" "${missing[@]}" || { log_error "Failed to install packages"; return 1; }
+        log_success "Packages installed"
+    } || log_success "All packages installed"
+    
+    echo ""
+    log_step "Installing subfinder..."
+    install_subfinder || log_warn "Subfinder skipped"
+    
+    create_app_user
+    install_app_files
+    setup_install_venv || return 1
+    set_permissions
+    create_service_file || return 1
+    enable_service
+    
+    echo ""
+    log_success "========================================"
+    log_success "  Installation Complete!"
+    log_success "========================================"
+    echo ""
+    log_info "Service:  $APP_NAME"
+    log_info "Path:     $INSTALL_DIR"
+    log_info "Script:   $APP_MAIN_SCRIPT"
+    echo ""
+    log_info "Commands:"
+    log_info "  sudo systemctl status  $APP_NAME"
+    log_info "  sudo systemctl restart $APP_NAME"
+    log_info "  sudo systemctl stop    $APP_NAME"
+    log_info "  sudo systemctl start   $APP_NAME"
+    log_info "  sudo journalctl -u $APP_NAME -f"
+    echo ""
+}
+
+#===============================================================================
+# UNINSTALL SERVICE
+#===============================================================================
+uninstall_service() {
+    log_step "Uninstalling $APP_NAME..."
+    
+    sudo systemctl is-active --quiet "$APP_NAME" && sudo systemctl stop "$APP_NAME"
+    sudo systemctl is-enabled --quiet "$APP_NAME" && sudo systemctl disable "$APP_NAME"
+    [[ -f "$SERVICE_FILE" ]] && { sudo rm -f "$SERVICE_FILE"; log_success "Service file removed"; }
+    sudo systemctl daemon-reload
+    
+    read -p "$(echo -e "${CYAN}[?]${NC}   Remove $INSTALL_DIR? [y/N]: ")" -r r
+    [[ "$r" =~ ^[Yy]$ ]] && { sudo rm -rf "$INSTALL_DIR"; log_success "Files removed"; }
+    
+    read -p "$(echo -e "${CYAN}[?]${NC}   Remove user '$APP_USER'? [y/N]: ")" -r r
+    [[ "$r" =~ ^[Yy]$ ]] && id "$APP_USER" &>/dev/null && { sudo userdel "$APP_USER" 2>/dev/null || sudo deluser "$APP_USER" 2>/dev/null; log_success "User removed"; }
+    
+    log_success "Uninstall complete!"
+}
+
+#===============================================================================
+# SERVICE HELPERS
+#===============================================================================
+service_status()  { sudo systemctl status "$APP_NAME.service"; }
+service_logs()    { sudo journalctl -u "$APP_NAME" -n "${1:-100}" --no-pager; }
+service_follow()  { sudo journalctl -u "$APP_NAME" -f; }
+service_restart() { sudo systemctl restart "$APP_NAME" && log_success "Restarted"; }
+service_stop()    { sudo systemctl stop "$APP_NAME" && log_success "Stopped"; }
+service_start()   { sudo systemctl start "$APP_NAME" && log_success "Started"; }
+
+#===============================================================================
 # MAIN AUTO-INSTALL FUNCTION
 #===============================================================================
 auto_install() {
+    banner
     echo ""
     echo "========================================"
     echo "    Auto Installation Script"
@@ -401,7 +721,37 @@ auto_install() {
 #===============================================================================
 # ENTRY POINT
 #===============================================================================
-# Only run if executed directly (not sourced)
+show_help() {
+    banner
+    echo ""
+    echo "Usage: $0 [command]"
+    echo ""
+    echo "Commands:"
+    echo "  install     Setup venv locally (development)"
+    echo "  service     Install as systemd service (production)"
+    echo "  uninstall   Remove service and files"
+    echo "  status      Show service status"
+    echo "  logs [N]    Show last N logs (default: 100)"
+    echo "  follow      Follow logs real-time"
+    echo "  restart     Restart service"
+    echo "  stop        Stop service"
+    echo "  start       Start service"
+    echo "  help        Show this help"
+    echo ""
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    auto_install "$@"
+    case "${1:-install}" in
+        install)   auto_install ;;
+        service)   install_as_service ;;
+        uninstall) uninstall_service ;;
+        status)    service_status ;;
+        logs)      service_logs "${2:-100}" ;;
+        follow)    service_follow ;;
+        restart)   service_restart ;;
+        stop)      service_stop ;;
+        start)     service_start ;;
+        help|--help|-h) show_help ;;
+        *)         log_error "Unknown command: $1"; show_help; exit 1 ;;
+    esac
 fi
