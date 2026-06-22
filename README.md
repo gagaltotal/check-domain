@@ -37,13 +37,6 @@ pip install aiohttp fastapi uvicorn websockets
 pip install -r requirements.txt
 ```
 
-## Installasi script bash
-
-```sh
-chmod +x install.sh
-./install.sh
-```
-
 ## Menjalankan
 
 ```sh
@@ -69,6 +62,63 @@ BATCH_SIZE=2000
 TIMEOUT=10
 HOST=0.0.0.0
 PORT=8000
+```
+
+## Installasi script bash
+
+## Clone dan install sebagai service
+
+```sh
+git clone https://github.com/gagaltotal/check-domain.git
+cd check-domain
+```
+
+## Setup .env dari example
+
+```sh
+cp .env-example .env
+nano .env
+```
+
+## Install sebagai systemd service
+
+```sh
+chmod +x installer.sh
+./installer.sh service
+./installer.sh help
+```
+
+## Cek status
+
+```sh
+sudo systemctl status check-domain
+```
+
+## Lihat logs real-time
+
+```sh
+sudo journalctl -u check-domain -f
+```
+
+## Restart setelah edit code
+
+```sh
+sudo systemctl restart check-domain
+```
+
+## Stop
+
+```sh
+sudo systemctl stop check-domain
+```
+
+## Update code (pull + restart)
+
+```sh
+cd check-domain
+git pull
+sudo rsync -a --exclude='.venv' --exclude='.git' --exclude='.env' ./ /opt/check-domain/
+sudo systemctl restart check-domain
 ```
 
 Jika `DOMAINS_FILE` diatur, nilai `DOMAINS` akan dibaca dari file tersebut.
