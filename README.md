@@ -25,6 +25,7 @@ Tool ini melakukan:
   - `fastapi`
   - `uvicorn`
   - `websockets`
+  - `uvloop`
 
 ## Instalasi
 
@@ -33,7 +34,7 @@ Tool ini melakukan:
 ```sh
 python -m venv .venv
 source .venv/bin/activate
-pip install aiohttp fastapi uvicorn websockets
+pip install aiohttp fastapi uvicorn websockets uvloop
 pip install -r requirements.txt
 ```
 
