@@ -19,31 +19,39 @@
     <section class="controls">
       <div>
         <label for="date-select">Tanggal laporan</label>
-        <select id="date-select" v-model="selectedDate" @change="loadSelectedDate">
+        <select id="date-select" v-model="selectedDate" @change="loadSelectedDate" :disabled="loading">
           <option value="current">Realtime</option>
           <option v-for="date in dates" :key="date" :value="date">{{ formatDate(date) }}</option>
         </select>
-        <button @click="refresh">Refresh</button>
+        <button @click="refresh" :disabled="loading" class="btn-refresh">
+          <span v-if="loading" class="spinner"></span>
+          <span v-else>⟳</span> Refresh
+        </button>
       </div>
       <div class="status-pill" :class="statusClass">{{ statusLabel }}</div>
     </section>
 
+    <div v-if="error" class="error-banner">
+      <span>{{ error }}</span>
+      <button @click="error = null" class="error-close">✕</button>
+    </div>
+
     <section class="summary-grid">
       <article class="card">
         <h2>Total Domain</h2>
-        <p>{{ snapshot.total_domains || 0 }}</p>
+        <p class="card-value">{{ snapshot.total_domains || 0 }}</p>
       </article>
       <article class="card card-success">
         <h2>Up</h2>
-        <p>{{ snapshot.total_up || 0 }}</p>
+        <p class="card-value">{{ snapshot.total_up || 0 }}</p>
       </article>
       <article class="card card-danger">
         <h2>Down</h2>
-        <p>{{ snapshot.total_down || 0 }}</p>
+        <p class="card-value">{{ snapshot.total_down || 0 }}</p>
       </article>
       <article class="card card-info">
         <h2>Last Scan</h2>
-        <p>{{ formattedTimestamp }}</p>
+        <p class="card-value card-timestamp">{{ formattedTimestamp }}</p>
       </article>
     </section>
 
@@ -61,33 +69,42 @@
     <section class="table-panel">
       <div class="table-header">
         <h2>Host Status</h2>
-        <p>Menampilkan host terbaru untuk tanggal yang dipilih.</p>
+        <p>Menampilkan {{ sortedHosts.length }} host</p>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Host</th>
-            <th>Status</th>
-            <th>Latency (s)</th>
-            <th>Uptime (%)</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="host in sortedHosts" :key="host.host">
-            <td>{{ host.host }}</td>
-            <td :class="host.status">{{ host.status }}</td>
-            <td>{{ host.latency !== null ? host.latency.toFixed(3) : '-' }}</td>
-            <td>{{ host.uptime_percent.toFixed(2) }}</td>
-          </tr>
-          <tr v-if="sortedHosts.length === 0">
-            <td colspan="4" class="empty-row">Tidak ada data host untuk tanggal ini.</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>No</th>
+              <th>Host</th>
+              <th>Status</th>
+              <th>Latency (s)</th>
+              <th>Uptime (%)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(host, index) in sortedHosts" :key="host.host" :class="{ 'row-down': host.status === 'down' }">
+              <td class="col-no">{{ index + 1 }}</td>
+              <td class="col-host">{{ host.host }}</td>
+              <td>
+                <span class="status-badge" :class="host.status">{{ host.status }}</span>
+              </td>
+              <td class="col-num">{{ host.latency != null ? host.latency.toFixed(3) : '-' }}</td>
+              <td class="col-num">{{ (host.uptime_percent || 0).toFixed(2) }}%</td>
+            </tr>
+            <tr v-if="sortedHosts.length === 0 && !loading">
+              <td colspan="5" class="empty-row">Tidak ada data host.</td>
+            </tr>
+            <tr v-if="loading">
+              <td colspan="5" class="loading-row"><span class="spinner"></span> Memuat...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <footer>
-      <p>Data dari endpoint API dan report JSON di `report/`.</p>
+      <p>Data dari endpoint API dan report JSON di <code>report/</code></p>
     </footer>
   </div>
 
